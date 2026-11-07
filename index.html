@@ -960,6 +960,7 @@ function openSettings(){const bk=S.lastBackup?Math.round((today0()-new Date(S.la
       <div class="actions"><button class="btn" id="sResF">שחזור מקובץ</button><button class="btn" id="sResT">שחזור מטקסט</button></div>
       <div id="resBox" hidden><textarea class="box" id="resTxt" aria-label="טקסט גיבוי"></textarea><button class="btn pri" id="resGo" style="margin-top:8px">שחזר</button></div></div>
     <div class="sec"><h3>לתת לחבר</h3><span class="muted small">קישור שפותח הגדרה ראשונית עם הסדר שלו. הנתונים של כל אחד נשמרים בטלפון שלו בלבד.</span><button class="btn" id="sShare">העתק קישור לחבר</button></div>
+    <div class="sec"><a class="link" href="privacy.html" target="_blank" rel="noopener">מדיניות פרטיות</a></div>
     <div class="sec"><h3>התחלה מחדש</h3><span class="muted small">מוחק את כל הנתונים במכשיר הזה ופותח הגדרה ראשונית. כדאי לשמור גיבוי קודם.</span><button class="btn" id="sReset" style="color:var(--miss)">התחלה מחדש</button></div>`,()=>{
     $('pName').onchange=e=>{S.profile.name=e.target.value.trim();save();render();};
     $('sRem').onclick=()=>openRem();
@@ -1485,7 +1486,8 @@ function avgLine(d,p){if(p===null)return'';const arr=[];for(let i=1;i<=28;i++){c
   return`<span class="${p>=a?'okline':'muted'}">${p>=a?`מעל הממוצע שלך (${a}%) 👏`:`הממוצע שלך ${a}%. מחר עוד הזדמנות`}</span>`;}
 
 // ---------- reminders: Google Calendar API / iPhone calendar / links + real test ----------
-const GCAL_CLIENT_ID='';  // OAuth Web client ID (origin https://asafperlman.github.io). Empty = direct sync hidden.
+const GCAL_CLIENT_ID='459004247998-ds0t1t2hss1oonfc0oft215i4128k1g5.apps.googleusercontent.com';  // project seder-yonatan, origin https://asafperlman.github.io
+const GCAL_SCOPE='https://www.googleapis.com/auth/calendar.app.created';  // only calendars this site creates
 const REM_MIN=()=>S.rem.min??5;
 const METHODS={gapi:'Google Calendar (חיבור ישיר)',ics:'יומן האייפון',links:'Google Calendar (קישורים)'};
 function routineSig(){const s=JSON.stringify(sorted().map(b=>[b.id,b.time,b.name,b.days]))+'|'+REM_MIN();let h=5381;for(let i=0;i<s.length;i++)h=((h<<5)+h+s.charCodeAt(i))|0;return String(h);}
@@ -1507,7 +1509,7 @@ function testIcs(){const s=new Date(Date.now()+2*60000),e=new Date(s.getTime()+1
 let gTok=null;
 function gisLoad(){return new Promise((res,rej)=>{if(window.google?.accounts?.oauth2)return res();const s=document.createElement('script');s.src='https://accounts.google.com/gsi/client';s.onload=()=>res();s.onerror=()=>rej({message:'לא הצלחתי לטעון את ההתחברות של גוגל'});document.head.appendChild(s);});}
 async function gAuth(){await gisLoad();return new Promise((res,rej)=>{
-  const c=google.accounts.oauth2.initTokenClient({client_id:GCAL_CLIENT_ID,scope:'https://www.googleapis.com/auth/calendar.events',prompt:S.rem.gConsent?'':'consent',
+  const c=google.accounts.oauth2.initTokenClient({client_id:GCAL_CLIENT_ID,scope:GCAL_SCOPE,prompt:S.rem.gConsent?'':'consent',
     callback:r=>{if(r.error)return rej({message:r.error_description||r.error});gTok={t:r.access_token,exp:Date.now()+((+r.expires_in||3600)-60)*1000};S.rem.gConsent=true;save();res();},
     error_callback:e=>rej({message:e?.type==='popup_closed'?'החלון נסגר לפני שאישרת':'ההתחברות לגוגל נכשלה'})});c.requestAccessToken();});}
 async function gApi(path,method='GET',body){if(!gTok||Date.now()>gTok.exp)await gAuth();
@@ -1517,19 +1519,24 @@ function gEvent(b){const{start,end}=slot(b),iso=x=>`${x.slice(0,4)}-${x.slice(4,
   return{summary:b.name,description:`מתוך "הסדר של ${NAME()}"`,start:{dateTime:iso(start),timeZone:'Asia/Jerusalem'},end:{dateTime:iso(end),timeZone:'Asia/Jerusalem'},
     recurrence:['RRULE:FREQ=WEEKLY;BYDAY='+b.days.map(d=>BYDAY[d]).join(',')],reminders:{useDefault:false,overrides:[{method:'popup',minutes:REM_MIN()}]},
     extendedProperties:{private:{hasseder:b.id}}};}
-async function gSync(onStep){const r=S.rem;r.gev=r.gev||{};r.gsig=r.gsig||{};let n=0;
+async function gCal(){const r=S.rem;
+  if(r.gcal){try{await gApi(`calendars/${encodeURIComponent(r.gcal)}`);return r.gcal;}catch(e){if(e.code!==404&&e.code!==410)throw e;r.gev={};r.gsig={};}}
+  const c=await gApi('calendars','POST',{summary:`הסדר של ${NAME()||'שלי'}`,description:'נוצר ומתעדכן אוטומטית מהאתר "הסדר"',timeZone:'Asia/Jerusalem'});
+  r.gcal=c.id;save();return c.id;}
+const gEv=id=>`calendars/${encodeURIComponent(S.rem.gcal)}/events`+(id?'/'+encodeURIComponent(id):'');
+async function gSync(onStep){const r=S.rem;r.gev=r.gev||{};r.gsig=r.gsig||{};let n=0;await gCal();
   const want=sorted().filter(b=>b.days.length);
   for(const b of want){const sg=sig(b)+'|'+REM_MIN(),id=r.gev[b.id];if(id&&r.gsig[b.id]===sg)continue;
     const ev=gEvent(b);
-    try{if(id)await gApi(`calendars/primary/events/${encodeURIComponent(id)}`,'PATCH',ev);else{const x=await gApi('calendars/primary/events','POST',ev);r.gev[b.id]=x.id;}}
-    catch(e){if(id&&(e.code===404||e.code===410)){const x=await gApi('calendars/primary/events','POST',ev);r.gev[b.id]=x.id;}else throw e;}
+    try{if(id)await gApi(gEv(id),'PATCH',ev);else{const x=await gApi(gEv(),'POST',ev);r.gev[b.id]=x.id;}}
+    catch(e){if(id&&(e.code===404||e.code===410)){const x=await gApi(gEv(),'POST',ev);r.gev[b.id]=x.id;}else throw e;}
     r.gsig[b.id]=sg;n++;save();onStep&&onStep(n);}
-  for(const id of Object.keys(r.gev))if(!want.some(b=>b.id===id)){try{await gApi(`calendars/primary/events/${encodeURIComponent(r.gev[id])}`,'DELETE');}catch(e){}delete r.gev[id];delete r.gsig[id];n++;}
+  for(const id of Object.keys(r.gev))if(!want.some(b=>b.id===id)){try{await gApi(gEv(r.gev[id]),'DELETE');}catch(e){}delete r.gev[id];delete r.gsig[id];n++;}
   r.added=true;r.via='gapi';r.sig=routineSig();r.syncedAt=new Date().toISOString();save();return n;}
-async function gUnsync(){const r=S.rem;for(const id of Object.keys(r.gev||{})){try{await gApi(`calendars/primary/events/${encodeURIComponent(r.gev[id])}`,'DELETE');}catch(e){}}
-  r.gev={};r.gsig={};r.added=false;r.ok=false;delete r.sig;save();}
-async function gTest(){const s=new Date(Date.now()+2*60000),e=new Date(s.getTime()+10*60000);
-  const x=await gApi('calendars/primary/events','POST',{summary:'בדיקת תזכורת – הסדר',start:{dateTime:s.toISOString()},end:{dateTime:e.toISOString()},reminders:{useDefault:false,overrides:[{method:'popup',minutes:0}]}});
+async function gUnsync(){const r=S.rem;if(r.gcal){try{await gApi(`calendars/${encodeURIComponent(r.gcal)}`,'DELETE');}catch(e){}}
+  r.gev={};r.gsig={};delete r.gcal;r.added=false;r.ok=false;delete r.sig;save();}
+async function gTest(){const s=new Date(Date.now()+2*60000),e=new Date(s.getTime()+10*60000);await gCal();
+  const x=await gApi(gEv(),'POST',{summary:'בדיקת תזכורת – הסדר',start:{dateTime:s.toISOString()},end:{dateTime:e.toISOString()},reminders:{useDefault:false,overrides:[{method:'popup',minutes:0}]}});
   S.rem.testId=x.id;save();}
 function openRem(){const r=S.rem;let via=r.via||(GCAL_CLIENT_ID?'gapi':'ics');let busy=false;
   const sent=()=>r.testAt&&Date.now()-r.testAt<20*60000&&r.testVia===via;
@@ -1543,8 +1550,8 @@ function openRem(){const r=S.rem;let via=r.via||(GCAL_CLIENT_ID?'gapi':'ics');le
       ${opt('links','🔗','Google Calendar, סדר אחד בכל פעם','כל סדר נפתח בגוגל ונשמר בנפרד. ההתראה לפי ברירת המחדל של היומן.')}</div>
       ${via!=='links'?`<div class="field"><label class="lb" for="rMin">מתי להתריע?</label><select class="inp" id="rMin">${[0,5,10,15].map(m=>`<option value="${m}" ${REM_MIN()===m?'selected':''}>${m?m+' דקות לפני כל סדר':'בזמן הסדר'}</option>`).join('')}</select></div>`:''}</div></div>
     <div class="sec steprow"><span class="num ${added&&!stale?'ok':''}">2</span><div><h3>הוספת הסדר ליומן</h3>
-      ${via==='gapi'?`<span class="muted small">${added?(stale?'<b>הסדר השתנה. סנכרון יעדכן את היומן.</b>':`מסונכרן ✓ ${r.syncedAt?new Date(r.syncedAt).toLocaleString('he-IL',{dateStyle:'short',timeStyle:'short'}):''}`):'תתבקש להתחבר לחשבון גוגל ולאשר גישה ליומן. האתר יוצר ומעדכן רק את אירועי הסדר.'}</span>
-          <button class="btn pri" id="rSync" ${busy?'disabled':''}>${busy?'מסנכרן…':added?'סנכרון':'התחברות וסנכרון'}</button>${r.gev&&Object.keys(r.gev).length?'<button class="link" id="rUnsync" style="align-self:flex-start">הסרת אירועי הסדר מהיומן</button>':''}`:
+      ${via==='gapi'?`<span class="muted small">${added?(stale?'<b>הסדר השתנה. סנכרון יעדכן את היומן.</b>':`מסונכרן ✓ ${r.syncedAt?new Date(r.syncedAt).toLocaleString('he-IL',{dateStyle:'short',timeStyle:'short'}):''}`):'תתבקש להתחבר לחשבון גוגל. האתר יוצר יומן נפרד בשם "הסדר של…" ועובד רק בו, בלי לגעת בשאר היומן. אם מופיע "Google לא אימתה את האפליקציה": Advanced ← המשך.'}</span>
+          <button class="btn pri" id="rSync" ${busy?'disabled':''}>${busy?'מסנכרן…':added?'סנכרון':'התחברות וסנכרון'}</button>${r.gev&&Object.keys(r.gev).length?'<button class="link" id="rUnsync" style="align-self:flex-start">הסרת יומן הסדר מגוגל</button>':''}`:
         via==='ics'?`<span class="muted small">באייפון: הקובץ נפתח ← "הוסף הכל" ← בוחרים יומן.${stale?' <b>הסדר השתנה מאז ההוספה: קודם מוחקים מהיומן את אירועי הסדר הישנים.</b>':''}</span><button class="btn pri" id="rIcs">הורדת הסדר ליומן</button>`:
         `<ol class="how"><li>באפליקציית Google Calendar: הגדרות ← היומן שלך ← <b>התראות ברירת מחדל: 10 דקות לפני</b>. האירועים מהקישורים מקבלים את ברירת המחדל.</li><li>מוסיפים כל סדר מהרשימה.</li></ol><button class="btn pri" id="rLinks">לרשימת הסדרים</button>`}</div></div>
     <div class="sec steprow"><span class="num ${r.ok?'ok':''}">3</span><div><h3>לאפשר התראות בטלפון</h3><ol class="how">
@@ -1568,7 +1575,7 @@ function openRem(){const r=S.rem;let via=r.via||(GCAL_CLIENT_ID?'gapi':'ics');le
             window.open(`https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent('בדיקת תזכורת – הסדר')}&dates=${icsUTC(s)}/${icsUTC(e)}`,'_blank','noopener');}
           S.rem.testAt=Date.now();S.rem.testVia=via;S.rem.via=via;save();draw(via==='gapi'?'<span class="okline">אירוע הבדיקה נוצר ביומן. ההתראה אמורה להגיע בעוד כשתי דקות.</span>':'');}catch(e){fail(e);}};
       $('rOk')&&($('rOk').onclick=async()=>{S.rem.ok=true;S.rem.okAt=new Date().toISOString();S.rem.via=via;S.rem.added=true;if(!S.rem.sig)S.rem.sig=routineSig();delete S.rem.snooze;save();
-        if(via==='gapi'&&S.rem.testId){try{await gApi(`calendars/primary/events/${encodeURIComponent(S.rem.testId)}`,'DELETE');}catch(e){}delete S.rem.testId;save();}
+        if(via==='gapi'&&S.rem.testId){try{await gApi(gEv(S.rem.testId),'DELETE');}catch(e){}delete S.rem.testId;save();}
         celebrate('התזכורות מחוברות ✓');draw();});
       $('rNo')&&($('rNo').onclick=()=>draw(`<div class="warnbox">בודקים לפי הסדר:</div><ol class="how">
         <li>האירוע "בדיקת תזכורת" מופיע ב${via==='ics'?'יומן האייפון':'Google Calendar'}? אם לא, הוא לא נשמר. שלח שוב ושמור.</li>
