@@ -1526,11 +1526,13 @@ async function gCal(){const r=S.rem;
 const gEv=id=>`calendars/${encodeURIComponent(S.rem.gcal)}/events`+(id?'/'+encodeURIComponent(id):'');
 async function gSync(onStep){const r=S.rem;r.gev=r.gev||{};r.gsig=r.gsig||{};let n=0;await gCal();
   const want=sorted().filter(b=>b.days.length);
-  for(const b of want){const sg=sig(b)+'|'+REM_MIN(),id=r.gev[b.id];if(id&&r.gsig[b.id]===sg)continue;
-    const ev=gEvent(b);
+  const todo=want.filter(b=>!(r.gev[b.id]&&r.gsig[b.id]===sig(b)+'|'+REM_MIN()));
+  const one=async b=>{const sg=sig(b)+'|'+REM_MIN(),id=r.gev[b.id],ev=gEvent(b);
     try{if(id)await gApi(gEv(id),'PATCH',ev);else{const x=await gApi(gEv(),'POST',ev);r.gev[b.id]=x.id;}}
-    catch(e){if(id&&(e.code===404||e.code===410)){const x=await gApi(gEv(),'POST',ev);r.gev[b.id]=x.id;}else throw e;}
-    r.gsig[b.id]=sg;n++;save();onStep&&onStep(n);}
+    catch(e){if(id&&(e.code===404||e.code===410)){const x=await gApi(gEv(),'POST',ev);r.gev[b.id]=x.id;}
+      else if(e.code===403||e.code===429){await new Promise(z=>setTimeout(z,1500));return one(b);}else throw e;}
+    r.gsig[b.id]=sg;n++;save();onStep&&onStep(n);};
+  for(let i=0;i<todo.length;i+=5)await Promise.all(todo.slice(i,i+5).map(one));
   for(const id of Object.keys(r.gev))if(!want.some(b=>b.id===id)){try{await gApi(gEv(r.gev[id]),'DELETE');}catch(e){}delete r.gev[id];delete r.gsig[id];n++;}
   r.added=true;r.via='gapi';r.sig=routineSig();r.syncedAt=new Date().toISOString();save();return n;}
 async function gUnsync(){const r=S.rem;if(r.gcal){try{await gApi(`calendars/${encodeURIComponent(r.gcal)}`,'DELETE');}catch(e){}}
